@@ -1,0 +1,8 @@
+node_modules/
+frontend/build/
+backend/.env
+backend/keszisi.db
+backend/uploads/*
+!backend/uploads/.gitkeep
+npm-debug.log*
+.DS_Store
