@@ -1,4 +1,4 @@
-// PDF generátor - böngésző print API alapján
+// PDF generátor - HTML sablonból valódi PDF-fájl (html2canvas + jsPDF)
 // Ez tökéletesen kezeli a magyar ékezetes karaktereket
 
 const SKILL_LABELS = {
@@ -388,35 +388,50 @@ export async function downloadBookingPDF(booking) {
   const fileName = getPdfFileName(booking);
   const html = buildPdfHTML(booking);
 
-  // Rejtett iframe: a felugró ablakot a böngésző blokkolja, ha a kattintás után
-  // aszinkron hívás (adatlekérés) következik, az iframe-et viszont nem.
+  // Valódi PDF-fájl készül (nem nyomtatási ablak), így telefonon és gépen is ugyanúgy működik.
+  // A tartalmat kívül eső, A4 szélességű iframe-ben rendereljük.
   const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0';
   document.body.appendChild(iframe);
 
-  const win = iframe.contentWindow;
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+  try {
+    const doc = iframe.contentDocument;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    doc.body.style.width = '794px';
 
-  // A fájlnév a nyomtatási dialógus alapértelmezett PDF-neve (a főoldal címe adja)
-  const prevTitle = document.title;
-  document.title = fileName.replace(/\.pdf$/, '');
+    if (doc.fonts && doc.fonts.ready) {
+      await Promise.race([doc.fonts.ready, new Promise(r => setTimeout(r, 2000))]);
+    }
+    await new Promise(r => setTimeout(r, 200));
 
-  await new Promise(r => setTimeout(r, 500));
+    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+      import('html2canvas'),
+      import('jspdf'),
+    ]);
 
-  await new Promise(resolve => {
-    const cleanup = () => {
-      document.title = prevTitle;
-      iframe.remove();
-      resolve();
-    };
-    win.onafterprint = cleanup;
-    win.focus();
-    win.print();
-    // Ha az afterprint nem érkezik meg (pl. mobil böngésző), akkor is takarítunk
-    setTimeout(cleanup, 60000);
-  });
+    const canvas = await html2canvas(doc.body, {
+      scale: 2, useCORS: true, backgroundColor: '#ffffff',
+      windowWidth: 794, width: 794, scrollX: 0, scrollY: 0,
+    });
+
+    // A4 oldalakra darabolás
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    const pageHeightPx = Math.floor(canvas.width * 297 / 210);
+    for (let y = 0, page = 0; y < canvas.height - 4; y += pageHeightPx, page++) {
+      const sliceHeight = Math.min(pageHeightPx, canvas.height - y);
+      const slice = document.createElement('canvas');
+      slice.width = canvas.width;
+      slice.height = sliceHeight;
+      slice.getContext('2d').drawImage(canvas, 0, y, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
+      if (page > 0) pdf.addPage();
+      pdf.addImage(slice.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 210, sliceHeight * 210 / canvas.width);
+    }
+    pdf.save(fileName);
+  } finally {
+    iframe.remove();
+  }
 }
 
 export async function downloadMultiplePDFs(bookings) {
