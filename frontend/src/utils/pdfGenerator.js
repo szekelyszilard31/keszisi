@@ -388,20 +388,35 @@ export async function downloadBookingPDF(booking) {
   const fileName = getPdfFileName(booking);
   const html = buildPdfHTML(booking);
 
-  // Nyomtatási ablak megnyitása
-  const printWindow = window.open('', '_blank', 'width=900,height=700');
-  printWindow.document.write(html);
-  printWindow.document.close();
+  // Rejtett iframe: a felugró ablakot a böngésző blokkolja, ha a kattintás után
+  // aszinkron hívás (adatlekérés) következik, az iframe-et viszont nem.
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(iframe);
 
-  // Megvárjuk a betöltést, majd nyomtatási dialógus
-  printWindow.onload = () => {
-    setTimeout(() => {
-      printWindow.document.title = fileName;
-      printWindow.print();
-      // Nyomtatás után bezárjuk
-      printWindow.onafterprint = () => printWindow.close();
-    }, 500);
-  };
+  const win = iframe.contentWindow;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+
+  // A fájlnév a nyomtatási dialógus alapértelmezett PDF-neve (a főoldal címe adja)
+  const prevTitle = document.title;
+  document.title = fileName.replace(/\.pdf$/, '');
+
+  await new Promise(r => setTimeout(r, 500));
+
+  await new Promise(resolve => {
+    const cleanup = () => {
+      document.title = prevTitle;
+      iframe.remove();
+      resolve();
+    };
+    win.onafterprint = cleanup;
+    win.focus();
+    win.print();
+    // Ha az afterprint nem érkezik meg (pl. mobil böngésző), akkor is takarítunk
+    setTimeout(cleanup, 60000);
+  });
 }
 
 export async function downloadMultiplePDFs(bookings) {
